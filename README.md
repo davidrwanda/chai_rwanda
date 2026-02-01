@@ -498,7 +498,6 @@ docker compose restart minio-init
 
 ## 📚 Additional Documentation
 
-- **[MAKEFILE_CHEATSHEET.md](MAKEFILE_CHEATSHEET.md)**: Quick reference for all Makefile commands and daily workflows
 - **[REPORT.md](REPORT.md)**: Comprehensive design decisions, trade-offs, assumptions, scaling strategies, security approaches, and ML evolution
 
 ## 🎯 Key Features Demonstrated
@@ -529,4 +528,4 @@ This project is created for assessment purposes only.
 
 ---
 
-**Built with ❤️ demonstrating production-ready data platform engineering**
+**Built with demonstrating production-ready data platform engineering**
