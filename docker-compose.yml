@@ -1,0 +1,221 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: analytics-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dataplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+      POSTGRES_DB: ${POSTGRES_DB:-analytics}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dataplatform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # MinIO (S3-compatible object storage)
+  minio:
+    image: minio/minio:latest
+    container_name: analytics-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # MinIO client for bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: analytics-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      /usr/bin/mc mb myminio/raw-data --ignore-existing;
+      /usr/bin/mc mb myminio/mlflow-artifacts --ignore-existing;
+      /usr/bin/mc policy set public myminio/raw-data;
+      exit 0;
+      "
+    networks:
+      - platform-network
+
+  # Loki (Log aggregation)
+  loki:
+    image: grafana/loki:2.9.3
+    container_name: analytics-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # Promtail (Log collector)
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: analytics-promtail
+    volumes:
+      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # Grafana (Visualization and dashboards)
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: analytics-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - loki
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # MLflow (Experiment tracking)
+  mlflow:
+    build:
+      context: ./mlflow
+      dockerfile: Dockerfile
+    container_name: analytics-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://${POSTGRES_USER:-dataplatform}:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/mlflow
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+
+  # Data Pipeline Application
+  pipeline:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: analytics-pipeline
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MINIO_ENDPOINT=minio:9000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./pipeline:/app
+      - ./data:/data
+      - ./models:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+    stdin_open: true
+    tty: true
+
+  # dbt (Data transformation)
+  dbt:
+    build:
+      context: ./dbt
+      dockerfile: Dockerfile
+    container_name: analytics-dbt
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-dataplatform}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
+      - POSTGRES_DB=${POSTGRES_DB:-analytics}
+    volumes:
+      - ./dbt:/dbt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - platform-network
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+    stdin_open: true
+    tty: true
+
+networks:
+  platform-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+  loki_data:
+  grafana_data:

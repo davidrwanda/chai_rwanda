@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: commit_metrics
+    description: Analytics-ready commit metrics with author and temporal aggregations
+    columns:
+      - name: commit_sha
+        description: Unique commit identifier
+        tests:
+          - unique
+          - not_null
+      - name: author_email
+        description: Commit author email
+        tests:
+          - not_null
+      - name: engagement_score
+        description: Composite engagement metric
+        tests:
+          - not_null
+      - name: author_total_commits
+        description: Total number of commits by this author
+        tests:
+          - not_null
+      - name: time_category
+        description: Categorization of commit time (business_hours, evening, night_early_morning)
+      - name: day_category
+        description: Categorization of day (weekday, weekend)
+      - name: message_category
+        description: Categorization of message length (short, medium, long)
+    
+    tests:
+      - dbt_utils.expression_is_true:
+          expression: "engagement_score >= 0"

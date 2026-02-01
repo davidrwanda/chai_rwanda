@@ -1,0 +1,42 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw data loaded from external sources
+    database: analytics
+    schema: raw
+    tables:
+      - name: commits
+        description: Raw GitHub commit data
+        columns:
+          - name: commit_sha
+            description: Unique commit SHA hash
+            tests:
+              - unique
+              - not_null
+          - name: author_name
+            description: Commit author name
+            tests:
+              - not_null
+          - name: author_email
+            description: Commit author email
+            tests:
+              - not_null
+          - name: author_date
+            description: Timestamp when the commit was authored
+            tests:
+              - not_null
+          - name: committer_name
+            description: Committer name
+          - name: committer_email
+            description: Committer email
+          - name: committer_date
+            description: Timestamp when the commit was committed
+          - name: commit_message
+            description: Commit message text
+            tests:
+              - not_null
+          - name: comment_count
+            description: Number of comments on the commit
+          - name: loaded_at
+            description: Timestamp when data was loaded into the warehouse

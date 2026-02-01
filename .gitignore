@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.csv
+*.parquet
+
+# ML Models
+models/*.pkl
+models/*.joblib
+mlruns/
+
+# Docker
+*.log
+
+# Environment
+.env
+.env.local
+
+# MacOS
+.DS_Store
+
+# DBT
+dbt_modules/
+target/
+logs/
+dbt_packages/
+
+# Loki/Grafana
+loki/data/
+grafana/data/
+promtail/positions.yaml

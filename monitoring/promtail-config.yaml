@@ -1,0 +1,64 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    
+    relabel_configs:
+      # Extract container name
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container_name'
+      
+      # Extract container image
+      - source_labels: ['__meta_docker_container_image']
+        target_label: 'image'
+      
+      # Extract container ID
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+      
+      # Extract container log path
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+      
+      # Add job label
+      - replacement: 'docker'
+        target_label: 'job'
+      
+      # Filter to only analytics platform containers
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.*(analytics|platform|pipeline|dbt|mlflow|postgres|minio|grafana|loki|promtail).*'
+        action: keep
+    
+    pipeline_stages:
+      # Parse JSON logs from Docker
+      - json:
+          expressions:
+            level: level
+            message: message
+            timestamp: time
+      
+      # Extract log level
+      - labels:
+          level:
+      
+      # Set timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+      
+      # Output final message
+      - output:
+          source: message

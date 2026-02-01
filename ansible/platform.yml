@@ -1,0 +1,450 @@
+---
+# Data Platform Orchestration Playbook
+# This playbook manages the complete lifecycle of the data platform
+# Usage: ansible-playbook platform.yml --tags setup,pipeline
+
+- name: Data Platform Orchestration
+  hosts: localhost
+  gather_facts: yes
+  
+  vars:
+    project_dir: "{{ playbook_dir }}/.."
+    services:
+      - postgres
+      - minio
+      - mlflow
+      - grafana
+      - loki
+      - promtail
+      - pipeline
+      - dbt
+    
+    service_ports:
+      postgres: 5432
+      minio: 9000
+      mlflow: 5000
+      grafana: 3000
+      loki: 3100
+  
+  tasks:
+    # ============================================================
+    # SETUP PHASE
+    # ============================================================
+    
+    - name: Setup - Display banner
+      tags: [setup, always]
+      debug:
+        msg:
+          - "╔════════════════════════════════════════════════════╗"
+          - "║    Data Platform - Ansible Orchestration          ║"
+          - "╚════════════════════════════════════════════════════╝"
+    
+    - name: Setup - Check Docker installation
+      tags: [setup, check]
+      command: docker --version
+      register: docker_version
+      changed_when: false
+      failed_when: false
+    
+    - name: Setup - Fail if Docker not installed
+      tags: [setup, check]
+      fail:
+        msg: "Docker is not installed. Please install Docker Desktop."
+      when: docker_version.rc != 0
+    
+    - name: Setup - Display Docker version
+      tags: [setup, check]
+      debug:
+        msg: "✓ Docker installed: {{ docker_version.stdout }}"
+    
+    - name: Setup - Check Docker Compose
+      tags: [setup, check]
+      command: docker compose version
+      register: compose_version
+      changed_when: false
+      failed_when: false
+    
+    - name: Setup - Display Compose version
+      tags: [setup, check]
+      debug:
+        msg: "✓ Docker Compose: {{ compose_version.stdout }}"
+    
+    - name: Setup - Check if .env exists
+      tags: [setup, config]
+      stat:
+        path: "{{ project_dir }}/.env"
+      register: env_file
+    
+    - name: Setup - Copy .env from example
+      tags: [setup, config]
+      copy:
+        src: "{{ project_dir }}/.env.example"
+        dest: "{{ project_dir }}/.env"
+        force: no
+      when: not env_file.stat.exists
+      register: env_copied
+    
+    - name: Setup - Display environment configuration status
+      tags: [setup, config]
+      debug:
+        msg: "{{ '✓ Created .env file' if env_copied.changed else '✓ .env file already exists' }}"
+    
+    - name: Setup - Build Docker images
+      tags: [setup, build]
+      command: docker compose build
+      args:
+        chdir: "{{ project_dir }}"
+      register: build_result
+      changed_when: "'Building' in build_result.stderr or 'built' in build_result.stderr"
+    
+    - name: Setup - Display build status
+      tags: [setup, build]
+      debug:
+        msg: "✓ Docker images built successfully"
+    
+    # ============================================================
+    # SERVICE MANAGEMENT
+    # ============================================================
+    
+    - name: Services - Start all containers
+      tags: [start, services]
+      command: docker compose up -d
+      args:
+        chdir: "{{ project_dir }}"
+      register: start_result
+      changed_when: "'Started' in start_result.stderr or 'Running' in start_result.stderr"
+    
+    - name: Services - Wait for services to initialize
+      tags: [start, services]
+      pause:
+        seconds: 15
+        prompt: "Waiting for services to initialize..."
+    
+    - name: Services - Check PostgreSQL health
+      tags: [start, services, health]
+      command: docker compose exec -T postgres pg_isready -U dataplatform
+      args:
+        chdir: "{{ project_dir }}"
+      register: postgres_health
+      retries: 5
+      delay: 3
+      until: postgres_health.rc == 0
+      changed_when: false
+      failed_when: false
+    
+    - name: Services - Check MinIO health
+      tags: [start, services, health]
+      uri:
+        url: http://localhost:9000/minio/health/live
+        method: GET
+      register: minio_health
+      retries: 5
+      delay: 3
+      until: minio_health.status == 200
+      changed_when: false
+      failed_when: false
+    
+    - name: Services - Check MLflow health
+      tags: [start, services, health]
+      uri:
+        url: http://localhost:5000/health
+        method: GET
+      register: mlflow_health
+      retries: 5
+      delay: 3
+      until: mlflow_health.status == 200
+      changed_when: false
+      failed_when: false
+    
+    - name: Services - Check Grafana health
+      tags: [start, services, health]
+      uri:
+        url: http://localhost:3000/api/health
+        method: GET
+      register: grafana_health
+      retries: 5
+      delay: 3
+      until: grafana_health.status == 200
+      changed_when: false
+      failed_when: false
+    
+    - name: Services - Check Loki health
+      tags: [start, services, health]
+      uri:
+        url: http://localhost:3100/ready
+        method: GET
+      register: loki_health
+      retries: 5
+      delay: 3
+      until: loki_health.status == 200
+      changed_when: false
+      failed_when: false
+    
+    - name: Services - Display health check results
+      tags: [start, services, health]
+      debug:
+        msg:
+          - "🏥 Health Check Results:"
+          - "  PostgreSQL: {{ '✓ Healthy' if postgres_health.rc == 0 else '✗ Unhealthy' }}"
+          - "  MinIO:      {{ '✓ Healthy' if minio_health.status == 200 else '✗ Unhealthy' }}"
+          - "  MLflow:     {{ '✓ Healthy' if mlflow_health.status == 200 else '✗ Unhealthy' }}"
+          - "  Grafana:    {{ '✓ Healthy' if grafana_health.status == 200 else '✗ Unhealthy' }}"
+          - "  Loki:       {{ '✓ Healthy' if loki_health.status == 200 else '✗ Unhealthy' }}"
+    
+    - name: Services - Display service URLs
+      tags: [start, services, info]
+      debug:
+        msg:
+          - "🌐 Service URLs:"
+          - "  Grafana:     http://localhost:3000 (admin/admin)"
+          - "  MLflow:      http://localhost:5000"
+          - "  MinIO UI:    http://localhost:9001 (minioadmin/minioadmin)"
+          - "  PostgreSQL:  localhost:5432 (dataplatform/changeme123)"
+          - "  Loki API:    http://localhost:3100"
+    
+    # ============================================================
+    # PIPELINE EXECUTION
+    # ============================================================
+    
+    - name: Pipeline - Step 1 - Data Ingestion
+      tags: [pipeline, ingest]
+      block:
+        - name: Pipeline - Display ingestion banner
+          debug:
+            msg:
+              - "=========================================="
+              - "Step 1/5: Data Ingestion"
+              - "=========================================="
+        
+        - name: Pipeline - Run ingestion script
+          command: docker compose run --rm pipeline python /app/src/ingestion.py
+          args:
+            chdir: "{{ project_dir }}"
+          register: ingest_result
+          changed_when: true
+        
+        - name: Pipeline - Display ingestion status
+          debug:
+            msg: "✓ Data ingestion completed"
+      rescue:
+        - name: Pipeline - Ingestion failed
+          fail:
+            msg: "Data ingestion failed: {{ ingest_result.stderr }}"
+    
+    - name: Pipeline - Step 2 - Data Transformation
+      tags: [pipeline, transform]
+      block:
+        - name: Pipeline - Display transformation banner
+          debug:
+            msg:
+              - "=========================================="
+              - "Step 2/5: Data Transformation"
+              - "=========================================="
+        
+        - name: Pipeline - Run transformation script
+          command: docker compose run --rm pipeline python /app/src/transformation.py
+          args:
+            chdir: "{{ project_dir }}"
+          register: transform_result
+          changed_when: true
+        
+        - name: Pipeline - Display transformation status
+          debug:
+            msg: "✓ Data transformation completed"
+      rescue:
+        - name: Pipeline - Transformation failed
+          fail:
+            msg: "Data transformation failed: {{ transform_result.stderr }}"
+    
+    - name: Pipeline - Step 3 - Data Validation
+      tags: [pipeline, validate]
+      block:
+        - name: Pipeline - Display validation banner
+          debug:
+            msg:
+              - "=========================================="
+              - "Step 3/5: Data Quality Validation"
+              - "=========================================="
+        
+        - name: Pipeline - Run validation script
+          command: docker compose run --rm pipeline python /app/src/validation.py
+          args:
+            chdir: "{{ project_dir }}"
+          register: validate_result
+          changed_when: true
+        
+        - name: Pipeline - Display validation status
+          debug:
+            msg: "✓ Data validation completed"
+      rescue:
+        - name: Pipeline - Validation failed
+          fail:
+            msg: "Data validation failed: {{ validate_result.stderr }}"
+    
+    - name: Pipeline - Step 4 - dbt Transformations
+      tags: [pipeline, dbt]
+      block:
+        - name: Pipeline - Display dbt banner
+          debug:
+            msg:
+              - "=========================================="
+              - "Step 4/5: dbt Transformations"
+              - "=========================================="
+        
+        - name: Pipeline - Install dbt dependencies
+          command: docker compose run --rm dbt dbt deps --profiles-dir /dbt
+          args:
+            chdir: "{{ project_dir }}"
+          register: dbt_deps_result
+          changed_when: "'installed' in dbt_deps_result.stdout"
+        
+        - name: Pipeline - Run dbt models
+          command: docker compose run --rm dbt dbt run --profiles-dir /dbt
+          args:
+            chdir: "{{ project_dir }}"
+          register: dbt_run_result
+          changed_when: true
+        
+        - name: Pipeline - Run dbt tests
+          command: docker compose run --rm dbt dbt test --profiles-dir /dbt
+          args:
+            chdir: "{{ project_dir }}"
+          register: dbt_test_result
+          changed_when: false
+          failed_when: false
+        
+        - name: Pipeline - Display dbt status
+          debug:
+            msg: "✓ dbt transformations completed"
+      rescue:
+        - name: Pipeline - dbt failed
+          fail:
+            msg: "dbt execution failed: {{ dbt_run_result.stderr }}"
+    
+    - name: Pipeline - Step 5 - ML Pipeline
+      tags: [pipeline, ml]
+      block:
+        - name: Pipeline - Display ML banner
+          debug:
+            msg:
+              - "=========================================="
+              - "Step 5/5: ML Model Training"
+              - "=========================================="
+        
+        - name: Pipeline - Run ML pipeline script
+          command: docker compose run --rm pipeline python /app/src/ml_pipeline.py
+          args:
+            chdir: "{{ project_dir }}"
+          register: ml_result
+          changed_when: true
+        
+        - name: Pipeline - Display ML status
+          debug:
+            msg: "✓ ML pipeline completed"
+      rescue:
+        - name: Pipeline - ML failed
+          fail:
+            msg: "ML pipeline failed: {{ ml_result.stderr }}"
+    
+    - name: Pipeline - Display completion summary
+      tags: [pipeline]
+      debug:
+        msg:
+          - "╔════════════════════════════════════════════════════╗"
+          - "║    ✓ Pipeline Completed Successfully!             ║"
+          - "╚════════════════════════════════════════════════════╝"
+          - ""
+          - "📊 View Results:"
+          - "  • Grafana Logs:  http://localhost:3000"
+          - "  • MLflow UI:     http://localhost:5000"
+          - "  • MinIO Console: http://localhost:9001"
+          - ""
+          - "💾 Data stored in:"
+          - "  • Raw data:      MinIO bucket (raw-data)"
+          - "  • Transformed:   PostgreSQL (raw.commits)"
+          - "  • Features:      PostgreSQL (analytics.ml_features)"
+          - "  • Analytics:     PostgreSQL (analytics_analytics schema)"
+    
+    # ============================================================
+    # DATA VERIFICATION
+    # ============================================================
+    
+    - name: Verify - Check row counts in database
+      tags: [verify, check]
+      command: >
+        docker compose exec -T postgres psql -U dataplatform -d analytics -c
+        "SELECT 'raw.commits' as table_name, COUNT(*) as row_count FROM raw.commits
+        UNION ALL SELECT 'analytics.ml_features', COUNT(*) FROM analytics.ml_features
+        UNION ALL SELECT 'analytics_analytics.commit_metrics', COUNT(*) FROM analytics_analytics.commit_metrics;"
+      args:
+        chdir: "{{ project_dir }}"
+      register: row_counts
+      changed_when: false
+    
+    - name: Verify - Display row counts
+      tags: [verify, check]
+      debug:
+        msg: "{{ row_counts.stdout_lines }}"
+    
+    # ============================================================
+    # BACKUP & RESTORE
+    # ============================================================
+    
+    - name: Backup - Create backup directory
+      tags: [backup]
+      file:
+        path: "{{ project_dir }}/backups"
+        state: directory
+        mode: '0755'
+    
+    - name: Backup - Generate timestamp
+      tags: [backup]
+      set_fact:
+        backup_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    
+    - name: Backup - Create database backup
+      tags: [backup]
+      shell: >
+        docker compose exec -T postgres pg_dump -U dataplatform analytics
+        > backups/db_backup_{{ backup_timestamp }}.sql
+      args:
+        chdir: "{{ project_dir }}"
+      register: backup_result
+      changed_when: true
+    
+    - name: Backup - Display backup status
+      tags: [backup]
+      debug:
+        msg: "✓ Database backup created: backups/db_backup_{{ backup_timestamp }}.sql"
+    
+    # ============================================================
+    # CLEANUP & SHUTDOWN
+    # ============================================================
+    
+    - name: Cleanup - Stop all services
+      tags: [stop, cleanup]
+      command: docker compose down
+      args:
+        chdir: "{{ project_dir }}"
+      register: stop_result
+      changed_when: true
+    
+    - name: Cleanup - Display stop status
+      tags: [stop, cleanup]
+      debug:
+        msg: "✓ All services stopped"
+    
+    - name: Cleanup - Remove volumes (dangerous)
+      tags: [cleanup, never]
+      command: docker compose down -v
+      args:
+        chdir: "{{ project_dir }}"
+      register: cleanup_result
+      changed_when: true
+    
+    - name: Cleanup - Display cleanup status
+      tags: [cleanup, never]
+      debug:
+        msg:
+          - "⚠️  WARNING: All data volumes removed"
+          - "✓ Cleanup completed"
