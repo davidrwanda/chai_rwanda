@@ -53,26 +53,27 @@ class DataTransformation:
         logger.info(f"Fetching latest data from MinIO bucket: {self.bucket_name}")
         
         try:
-            # List objects in the bucket
-            objects = list(self.minio_client.list_objects(
-                self.bucket_name,
-                prefix="github-commits/",
-                recursive=True
-            ))
+            # Try multi-repo data first, fall back to single-repo
+            for prefix in ["github-commits-multi/", "github-commits/"]:
+                objects = list(self.minio_client.list_objects(
+                    self.bucket_name,
+                    prefix=prefix,
+                    recursive=True
+                ))
+                
+                if objects:
+                    # Sort by last modified and get the most recent
+                    latest_object = sorted(objects, key=lambda x: x.last_modified, reverse=True)[0]
+                    logger.info(f"Latest object: {latest_object.object_name}")
+                    
+                    # Download the object
+                    response = self.minio_client.get_object(self.bucket_name, latest_object.object_name)
+                    data = json.loads(response.read())
+                    
+                    logger.info(f"Loaded {len(data)} records from MinIO")
+                    return pd.DataFrame(data)
             
-            if not objects:
-                raise ValueError("No data found in MinIO bucket")
-            
-            # Sort by last modified and get the most recent
-            latest_object = sorted(objects, key=lambda x: x.last_modified, reverse=True)[0]
-            logger.info(f"Latest object: {latest_object.object_name}")
-            
-            # Download the object
-            response = self.minio_client.get_object(self.bucket_name, latest_object.object_name)
-            data = json.loads(response.read())
-            
-            logger.info(f"Loaded {len(data)} records from MinIO")
-            return pd.DataFrame(data)
+            raise ValueError("No data found in MinIO bucket")
         
         except Exception as e:
             logger.error(f"Failed to fetch data from MinIO: {e}")
@@ -81,6 +82,10 @@ class DataTransformation:
     def transform_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply transformations to the raw data"""
         logger.info("Starting data transformation")
+        
+        # Store parents info before flattening (used to detect merge commits)
+        df['num_parents'] = df['parents'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+        df['is_actual_merge'] = df['num_parents'] > 1
         
         # Flatten nested JSON structure
         transformed = pd.json_normalize(df.to_dict('records'))
@@ -95,7 +100,11 @@ class DataTransformation:
             'commit.committer.email': 'committer_email',
             'commit.committer.date': 'committer_date',
             'commit.message': 'commit_message',
-            'commit.comment_count': 'comment_count'
+            'commit.comment_count': 'comment_count',
+            'source_repository': 'source_repository',  # Preserve repository source
+            'ingestion_timestamp': 'ingestion_timestamp',  # Preserve ingestion timestamp
+            'num_parents': 'num_parents',  # Number of parent commits
+            'is_actual_merge': 'is_actual_merge'  # True merge commits (2+ parents)
         }
         
         # Select available columns
@@ -136,6 +145,24 @@ class DataTransformation:
         
         logger.info(f"Transformation complete. Output shape: {df_clean.shape}")
         logger.info(f"Columns: {list(df_clean.columns)}")
+        
+        # Log class distribution
+        if 'is_actual_merge' in df_clean.columns:
+            merge_count = df_clean['is_actual_merge'].sum()
+            total_count = len(df_clean)
+            logger.info("=" * 60)
+            logger.info("CLASS DISTRIBUTION:")
+            logger.info(f"  Total commits: {total_count}")
+            logger.info(f"  Merge commits (2+ parents): {merge_count} ({merge_count/total_count*100:.1f}%)")
+            logger.info(f"  Regular commits: {total_count - merge_count} ({(total_count-merge_count)/total_count*100:.1f}%)")
+            
+            if 'source_repository' in df_clean.columns:
+                logger.info("  Distribution by repository:")
+                for repo in df_clean['source_repository'].unique():
+                    repo_df = df_clean[df_clean['source_repository'] == repo]
+                    repo_merges = repo_df['is_actual_merge'].sum()
+                    logger.info(f"    - {repo}: {len(repo_df)} commits, {repo_merges} merges ({repo_merges/len(repo_df)*100:.1f}%)")
+            logger.info("=" * 60)
         
         return df_clean
     
