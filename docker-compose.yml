@@ -140,6 +140,8 @@ services:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -164,10 +166,17 @@ services:
       - POSTGRES_HOST=postgres
       - MINIO_ENDPOINT=minio:9000
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_DEFAULT_REGION=us-east-1
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - MLFLOW_S3_IGNORE_TLS=true
     volumes:
       - ./pipeline:/app
       - ./data:/data
       - ./models:/models
+      - mlflow_artifacts:/mlflow/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -219,3 +228,4 @@ volumes:
   minio_data:
   loki_data:
   grafana_data:
+  mlflow_artifacts:

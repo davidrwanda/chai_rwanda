@@ -20,6 +20,6 @@ EXPOSE 5000
 # Start MLflow server
 CMD mlflow server \
     --backend-store-uri ${MLFLOW_BACKEND_STORE_URI} \
-    --default-artifact-root s3://mlflow-artifacts/ \
+    --default-artifact-root file:///mlflow/artifacts \
     --host 0.0.0.0 \
     --port 5000

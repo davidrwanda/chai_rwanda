@@ -232,9 +232,14 @@ class MLPipeline:
             logger.info("Feature Importance:")
             logger.info(f"\n{feature_importance.to_string()}")
             
-            # Log model
-            mlflow.sklearn.log_model(model, "model")
-            mlflow.sklearn.log_model(scaler, "scaler")
+            # Log model (optional - may fail if S3 not configured)
+            try:
+                mlflow.sklearn.log_model(model, "model")
+                mlflow.sklearn.log_model(scaler, "scaler")
+                logger.info("Successfully logged models to MLflow artifact storage")
+            except Exception as e:
+                logger.warning(f"Could not log models to MLflow artifacts (metrics still logged): {e}")
+                logger.info("Model artifacts will be saved locally instead")
             
             # Save model locally
             model_path = '/models/commit_classifier.pkl'
@@ -242,8 +247,14 @@ class MLPipeline:
             joblib.dump(model, model_path)
             joblib.dump(scaler, scaler_path)
             
-            mlflow.log_artifact(model_path)
-            mlflow.log_artifact(scaler_path)
+            # Log local artifacts (optional - may fail if S3 not configured)
+            try:
+                mlflow.log_artifact(model_path)
+                mlflow.log_artifact(scaler_path)
+                logger.info("Successfully logged local model artifacts to MLflow")
+            except Exception as e:
+                logger.warning(f"Could not log local artifacts to MLflow: {e}")
+                logger.info(f"Models saved locally at {model_path} and {scaler_path}")
             
             logger.info("=" * 60)
             logger.info("Model Training Results")
@@ -252,7 +263,7 @@ class MLPipeline:
                 logger.info(f"{metric}: {value:.4f}")
             logger.info("=" * 60)
             logger.info(f"MLflow Run ID: {run.info.run_id}")
-            logger.info(f"Model saved to: {model_path}")
+            logger.info(f"Model saved locally to: {model_path}")
             
             return {
                 'run_id': run.info.run_id,
